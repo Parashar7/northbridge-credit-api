@@ -1,0 +1,30 @@
+# Build output
+target/
+
+# Mule / Anypoint local
+.mule/
+*.jar
+
+# IDE / Studio
+.project
+.classpath
+.settings/
+.factorypath
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — never commit (use a secret manager or Mule Secure Properties)
+*.env
+.env
+*.key
+*.pem
+*.p12
+*.jks
+*secure*.properties
+local.properties
+credentials*.properties

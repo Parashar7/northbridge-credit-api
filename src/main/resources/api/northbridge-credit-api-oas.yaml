@@ -1,0 +1,214 @@
+openapi: 3.0.3
+info:
+  title: NorthBridge Credit Decision API
+  version: v1
+  description: CloudHub-ready credit decision API with MCP-style tool discovery and invocation endpoints.
+servers:
+  - url: https://{appName}.{region}.cloudhub.io
+    description: CloudHub public endpoint
+    variables:
+      appName:
+        default: northbridge-credit-api
+      region:
+        default: us-e2
+  - url: http://localhost:8082
+    description: Local development
+security:
+  - bearerAuth: []
+  - clientIdHeader: []
+    clientSecretHeader: []
+paths:
+  /api/v1/credit/check:
+    post:
+      summary: Run credit decisioning
+      operationId: runCreditCheckRest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreditCheckRequest'
+            examples:
+              onboardingCreditRequest:
+                value:
+                  legalName: ACME Manufacturing Ltd
+                  registrationNumber: "09876543"
+                  jurisdiction: UK
+                  industry: Manufacturing
+                  requestedExposure:
+                    currency: GBP
+                    amount: 2000000
+      responses:
+        '200':
+          description: Credit decision result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditCheckResponse'
+              examples:
+                approveResult:
+                  value:
+                    status: PASS
+                    decisionBand: APPROVE
+                    creditScore: 740
+                    approvedLimit:
+                      currency: GBP
+                      amount: 2000000
+                    requiresHitl: false
+                    reasons: ["Credit profile within policy threshold"]
+                    checkId: CRD-20260726235541
+                    checkedAt: "2026-07-26T23:55:41+05:30"
+                    sourceRef: 8e9fcc95-d757-4049-88e9-95d58e826ea5
+  /mcp/tools:
+    get:
+      summary: Discover available MCP tools
+      operationId: listTools
+      responses:
+        '200':
+          description: Tool catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolCatalog'
+  /mcp/tools/runCreditCheck/invoke:
+    post:
+      summary: Invoke Credit MCP tool
+      operationId: runCreditCheckMcp
+      parameters:
+        - in: header
+          name: x-correlation-id
+          schema:
+            type: string
+          required: false
+          description: Correlation ID for tracing across gateway/runtime.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/CreditCheckRequest'
+                - $ref: '#/components/schemas/CreditInvokeWrapper'
+            examples:
+              invokeWrapped:
+                value:
+                  input:
+                    legalName: ACME Manufacturing Ltd
+                    registrationNumber: "09876543"
+                    jurisdiction: UK
+                    industry: Manufacturing
+                    requestedExposure:
+                      currency: GBP
+                      amount: 2000000
+      responses:
+        '200':
+          description: Credit decision result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditCheckResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    clientIdHeader:
+      type: apiKey
+      in: header
+      name: client_id
+    clientSecretHeader:
+      type: apiKey
+      in: header
+      name: client_secret
+  schemas:
+    CreditCheckRequest:
+      type: object
+      required:
+        - legalName
+        - registrationNumber
+        - jurisdiction
+        - requestedExposure
+      properties:
+        legalName:
+          type: string
+        registrationNumber:
+          type: string
+        jurisdiction:
+          type: string
+        industry:
+          type: string
+        requestedExposure:
+          type: object
+          required:
+            - currency
+            - amount
+          properties:
+            currency:
+              type: string
+            amount:
+              type: number
+        idempotencyKey:
+          type: string
+    CreditInvokeWrapper:
+      type: object
+      required:
+        - input
+      properties:
+        input:
+          $ref: '#/components/schemas/CreditCheckRequest'
+    CreditCheckResponse:
+      type: object
+      required:
+        - status
+        - decisionBand
+        - creditScore
+        - approvedLimit
+        - reasons
+        - sourceRef
+      properties:
+        status:
+          type: string
+          enum: [PASS, FAIL, INCONCLUSIVE]
+        decisionBand:
+          type: string
+          enum: [APPROVE, REVIEW, DECLINE]
+        creditScore:
+          type: number
+        approvedLimit:
+          type: object
+          required:
+            - currency
+            - amount
+          properties:
+            currency:
+              type: string
+            amount:
+              type: number
+        requiresHitl:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            type: string
+        checkId:
+          type: string
+        checkedAt:
+          type: string
+          format: date-time
+        sourceRef:
+          type: string
+    ToolCatalog:
+      type: object
+      properties:
+        tools:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              description:
+                type: string
+              inputSchema:
+                type: object

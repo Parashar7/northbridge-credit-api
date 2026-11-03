@@ -1,0 +1,49 @@
+#%RAML 1.0
+title: NorthBridge Credit Decision API
+version: v1
+baseUri: /api/v1
+mediaType: application/json
+
+types:
+  CreditCheckRequest:
+    type: object
+    required: [legalName, registrationNumber, jurisdiction, requestedExposure]
+    properties:
+      legalName: string
+      registrationNumber: string
+      jurisdiction: string
+      industry?: string
+      requestedExposure:
+        type: object
+        required: [currency, amount]
+        properties:
+          currency: string
+          amount: number
+  CreditCheckResponse:
+    type: object
+    required: [status, decisionBand, creditScore, approvedLimit, reasons, sourceRef]
+    properties:
+      status:
+        enum: [PASS, FAIL, INCONCLUSIVE]
+      decisionBand:
+        enum: [APPROVE, REVIEW, DECLINE]
+      creditScore: number
+      approvedLimit:
+        type: object
+        required: [currency, amount]
+        properties:
+          currency: string
+          amount: number
+      requiresHitl: boolean
+      reasons: string[]
+      sourceRef: string
+
+/credit/check:
+  post:
+    description: Run internal credit decisioning for onboarding.
+    body:
+      type: CreditCheckRequest
+    responses:
+      200:
+        body:
+          type: CreditCheckResponse

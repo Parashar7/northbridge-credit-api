@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:mcp="http://www.mulesoft.org/schema/mule/mcp"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+      http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+      http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+      http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+      http://www.mulesoft.org/schema/mule/mcp http://www.mulesoft.org/schema/mule/mcp/current/mule-mcp.xsd">
+
+  <http:listener-config name="credit-http-listener-config">
+    <http:listener-connection host="0.0.0.0" port="${http.port}"/>
+  </http:listener-config>
+
+  <mcp:server-config name="CREDIT_MCP_Server"
+                     serverName="NorthBridge Credit MCP Server"
+                     serverVersion="1.0.0">
+    <mcp:streamable-http-server-connection listenerConfig="credit-http-listener-config"
+                                           mcpEndpointPath="/mcp"/>
+  </mcp:server-config>
+
+  <configuration-properties doc:name="Configuration properties" doc:id="79902506-3f62-4207-af76-d10124a2be4e" file="mule-artifact.properties" />
+	<flow name="post-credit-check-flow">
+    <http:listener config-ref="credit-http-listener-config" path="/api/v1/credit/check" allowedMethods="POST"/>
+    <set-variable variableName="correlationId" value="#[attributes.headers.'x-correlation-id' default uuid()]"/>
+    <flow-ref name="build-credit-response-subflow"/>
+  </flow>
+
+  <flow name="mcp-run-credit-check-tool-flow">
+    <mcp:tool-listener config-ref="CREDIT_MCP_Server"
+                       name="runCreditCheck">
+      <mcp:description>Run internal credit decisioning for onboarding.</mcp:description>
+      <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "legalName": { "type": "string", "description": "Registered legal entity name" },
+    "registrationNumber": { "type": "string", "description": "Company registration number" },
+    "jurisdiction": { "type": "string", "description": "Country/state of incorporation" },
+    "industry": { "type": "string", "description": "Customer industry sector" },
+    "requestedExposure": {
+      "type": "object",
+      "properties": {
+        "currency": { "type": "string" },
+        "amount": { "type": "number" }
+      },
+      "required": ["currency", "amount"]
+    },
+    "idempotencyKey": { "type": "string", "description": "Request idempotency key" }
+  },
+  "required": ["legalName", "registrationNumber", "jurisdiction", "requestedExposure"]
+}]]></mcp:parameters-schema>
+      <mcp:responses>
+        <mcp:text-tool-response-content text="#[payload.^raw]"/>
+      </mcp:responses>
+      <mcp:on-error-responses>
+        <mcp:text-tool-response-content text="#['Error running credit check: $(error.description)']"/>
+      </mcp:on-error-responses>
+    </mcp:tool-listener>
+    <set-variable variableName="correlationId" value="#[attributes.additionalProperties.'x-correlation-id' default uuid()]"/>
+    <flow-ref name="build-credit-response-subflow"/>
+  </flow>
+
+  <sub-flow name="build-credit-response-subflow">
+    <ee:transform doc:name="Build Credit Decision">
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var requestedExposure = payload.requestedExposure default {}
+var exposure = requestedExposure.amount default 0
+var currency = requestedExposure.currency default "USD"
+var score =
+  if (exposure <= 1000000) 780
+  else if (exposure <= 3000000) 740
+  else if (exposure <= 5000000) 690
+  else if (exposure <= 8000000) 630
+  else 560
+var decisionBand =
+  if (score >= 720) "APPROVE"
+  else if (score >= 620) "REVIEW"
+  else "DECLINE"
+---
+{
+  status: if (exposure <= 0) "INCONCLUSIVE" else if (decisionBand == "DECLINE") "FAIL" else "PASS",
+  decisionBand: if (exposure <= 0) "REVIEW" else decisionBand,
+  creditScore: score,
+  approvedLimit: {
+    currency: currency,
+    amount:
+      if (exposure <= 0) 0
+      else if (decisionBand == "APPROVE") exposure
+      else if (decisionBand == "REVIEW") (exposure * 0.7)
+      else 0
+  },
+  requiresHitl: exposure > 5000000 or decisionBand == "REVIEW",
+  reasons:
+    if (exposure <= 0) ["Missing or invalid requestedExposure.amount"]
+    else if (decisionBand == "APPROVE") ["Credit profile within policy threshold"]
+    else if (decisionBand == "REVIEW") ["Manual underwriter review required for exposure or medium risk profile"]
+    else ["Credit profile below underwriting threshold"],
+  checkId: "CRD-" ++ (now() as String {format: "yyyyMMddHHmmss"}),
+  checkedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ssXXX"},
+  sourceRef: vars.correlationId
+}]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </sub-flow>
+</mule>
